@@ -1,0 +1,58 @@
+name: Build dendron-cli Docker image
+on:
+  workflow_dispatch:
+  push:
+  schedule:
+    - cron: "0 0 * * 0"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Build
+    steps:
+      - uses: actions/checkout@v2
+
+      - uses: actions/setup-node@v2
+        with:
+          node-version: 'lts/*'
+
+      - id: fetch_version
+        name: Fetch dendron-cli npm version
+        run: echo "::set-output name=version::$(npm show @dendronhq/dendron-cli version)"
+
+      - name: Fetch Docker current version existence
+        id: fetch_docker_version
+        continue-on-error: true
+        run: docker manifest inspect ghcr.io/thibaultnocchi/dendron-alpine:${{ steps.fetch_version.outputs.version }}
+
+      - name: Docker already exists
+        if: steps.fetch_docker_version.outcome == 'success'
+        run: |
+          echo "Docker for version ${{ steps.fetch_version.outputs.version }} already exists, skipping build"
+
+      - name: Login to GitHub Container Registry
+        if: steps.fetch_docker_version.outcome == 'failure' || github.event_name != 'schedule'
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure QEMU
+        if: steps.fetch_docker_version.outcome == 'failure' || github.event_name != 'schedule'
+        uses: docker/setup-qemu-action@v1
+
+      - name: Configure Docker Buildx
+        if: steps.fetch_docker_version.outcome == 'failure' || github.event_name != 'schedule'
+        uses: docker/setup-buildx-action@v1
+
+      - name: Build and push
+        id: docker_build
+        if: steps.fetch_docker_version.outcome == 'failure' || github.event_name != 'schedule'
+        uses: docker/build-push-action@v2
+        with:
+          build-args: RELEASE=${{ steps.fetch_version.outputs.version }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/thibaultnocchi/dendron-alpine:latest
+            ghcr.io/thibaultnocchi/dendron-alpine:${{ steps.fetch_version.outputs.version }}
